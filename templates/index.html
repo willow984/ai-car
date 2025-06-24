@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 小车控制中心</title>
+    <style>
+        :root { --theme-color: #007bff; --theme-hover: #0056b3; --border-color: #ddd; --bg-light: #f4f4f9; --bg-white: #fff; --text-dark: #333; --text-light: #fff; }
+        html, body { height: 100%; margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: var(--bg-light); color: var(--text-dark); }
+        .header { background-color: #4a4a4a; color: var(--text-light); padding: 15px 20px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); flex-shrink: 0; }
+        .main-container { display: flex; flex-grow: 1; overflow: hidden; padding: 20px; gap: 20px; height: calc(100% - 70px); }
+        .controls-container { flex: 1; display: flex; flex-direction: column; gap: 20px; max-width: 350px; }
+        .chat-container { flex: 2; display: flex; flex-direction: column; background-color: var(--bg-white); box-shadow: 0 0 10px rgba(0,0,0,0.1); border-radius: 8px; padding: 20px; min-width: 0; /* 4. 修复：Flexbox fix for overflow */ }
+        .panel { background-color: var(--bg-white); box-shadow: 0 0 10px rgba(0,0,0,0.1); border-radius: 8px; padding: 20px; }
+        .panel h3 { margin-top: 0; border-bottom: 1px solid var(--border-color); padding-bottom: 10px; }
+        #chat-log { flex-grow: 1; overflow-y: auto; border: 1px solid var(--border-color); padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+        .message { display: flex; flex-direction: column; margin-bottom: 15px; max-width: 90%; line-height: 1.5; word-wrap: break-word; }
+        .message-content { padding: 10px 15px; border-radius: 18px; }
+        .user-message { align-self: flex-end; }
+        .user-message .message-content { background-color: var(--theme-color); color: var(--text-light); }
+        .assistant-message { align-self: flex-start; }
+        .assistant-message .message-content { background-color: #e9e9eb; }
+        .role { font-weight: bold; margin-bottom: 5px; font-size: 0.9em; }
+        .user-message .role { text-align: right; }
+        .message img { max-width: 250px; height: auto; border-radius: 8px; margin-top: 10px; cursor: pointer; }
+        #chat-form { display: flex; flex-wrap: wrap; gap: 10px; flex-shrink: 0; }
+        #prompt-input { flex-grow: 1; padding: 10px; border: 1px solid #ccc; border-radius: 20px; }
+        .btn { padding: 10px 20px; border: none; border-radius: 20px; cursor: pointer; background-color: var(--theme-color); color: var(--text-light); transition: background-color 0.3s; font-size: 14px; white-space: nowrap; }
+        .btn:hover:not(:disabled) { background-color: var(--theme-hover); }
+        .btn:disabled { background-color: #ccc; cursor: not-allowed; }
+        .btn-secondary { background-color: #6c757d; }
+        .btn-secondary:hover:not(:disabled) { background-color: #5a6268; }
+        .btn-danger { background-color: #dc3545; }
+        .btn-danger:hover:not(:disabled) { background-color: #c82333; }
+        .btn-success { background-color: #28a745; }
+        .btn-success:hover:not(:disabled) { background-color: #218838; }
+        .controls-panel .btn { width: 100%; margin-bottom: 10px; box-sizing: border-box; }
+        #video-container { display: none; border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; margin-top: 10px;}
+        #video-feed { width: 100%; height: auto; background-color: #000; }
+        #loading-indicator { display: none; text-align: center; padding: 10px; font-weight: bold; color: #6c757d; flex-shrink: 0; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h1>AI 小车控制中心</h1>
+</div>
+
+<div class="main-container">
+    <div class="controls-container">
+        <div class="panel controls-panel">
+            <h3>控制面板</h3>
+            <button id="toggle-mute-btn" class="btn btn-secondary">
+                {{ "取消静音" if is_muted else "开启静音" }}
+            </button>
+            <button id="clear-history-btn" class="btn btn-secondary">清空记忆 (新会话)</button>
+            <button id="toggle-autonomy-btn" class="btn btn-secondary">开启自主移动</button>
+            <button id="toggle-camera-btn" class="btn btn-secondary">显示摄像头</button>
+            <button id="stop-tts-btn" class="btn btn-danger" style="display: none;">停止播放</button>
+            <button class="btn btn-secondary" onclick="window.open('http://192.168.10.102:3000', '_blank');">打开SLAM页面</button>
+        </div>
+        <div class="panel">
+            <h3>摄像头实时画面</h3>
+            <div id="video-container">
+                <img id="video-feed" src="" alt="Live camera feed">
+            </div>
+        </div>
+    </div>
+
+    <div class="chat-container">
+        <div id="chat-log">
+            {% for msg in history %}
+            <div class="message {{ 'user-message' if msg.role == 'user' else 'assistant-message' }}">
+                <div class="role">{{ '你' if msg.role == 'user' else 'AI小车' }}</div>
+                <div class="message-content">
+                {% if msg.role == 'user' %}
+                    {% for item in msg.content %}{% if item.type == 'text' %}<span>{{ item.text }}</span>{% endif %}{% endfor %}
+                    {% if msg.image_path %}<img src="{{ url_for('static', filename=msg.image_path.replace('static/', '')) }}" onclick="window.open(this.src, '_blank');">{% endif %}
+                {% else %}
+                    {% if msg.tool_calls %}
+                        <span style="color: #6c757d; font-style: italic;">[正在执行指令...]</span>
+                    {% else %}
+                         <span>{{ msg.content }}</span>
+                    {% endif %}
+                {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        <div id="loading-indicator">正在思考中...</div>
+        <form id="chat-form">
+            <fieldset id="form-fieldset" style="width: 100%; border: none; padding: 0; margin: 0;">
+                <div style="display: flex; gap: 10px; width: 100%;">
+                    <input type="text" id="prompt-input" name="prompt" placeholder="输入文字..." autocomplete="off" style="flex-grow: 1;">
+                    <input type="file" id="image-input" name="image" accept="image/*" style="display: none;">
+                    <button type="button" class="btn btn-secondary" onclick="document.getElementById('image-input').click();">上传</button>
+                    <button type="submit" class="btn">发送</button>
+                    <button type="button" id="capture-btn" class="btn">拍照发送</button>
+                </div>
+            </fieldset>
+        </form>
+    </div>
+</div>
+
+<script>
+    const chatLog = document.getElementById('chat-log');
+    const chatForm = document.getElementById('chat-form');
+    const formFieldset = document.getElementById('form-fieldset');
+    const promptInput = document.getElementById('prompt-input');
+    const captureBtn = document.getElementById('capture-btn');
+    const toggleMuteBtn = document.getElementById('toggle-mute-btn');
+    const clearHistoryBtn = document.getElementById('clear-history-btn');
+    const loadingIndicator = document.getElementById('loading-indicator');
+    const toggleCameraBtn = document.getElementById('toggle-camera-btn');
+    const videoContainer = document.getElementById('video-container');
+    const videoFeed = document.getElementById('video-feed');
+    const stopTtsBtn = document.getElementById('stop-tts-btn');
+    const toggleAutonomyBtn = document.getElementById('toggle-autonomy-btn');
+    let ttsStatusInterval;
+    let currentHistoryLength = 0;
+    let isAutonomousMode = false;
+
+    function updateChat(data) {
+        chatLog.innerHTML = '';
+        if (data.history) {
+            data.history.forEach(msg => {
+                const msgWrapper = document.createElement('div');
+                msgWrapper.className = `message ${msg.role === 'user' ? 'user-message' : 'assistant-message'}`;
+                
+                let contentHTML = `<div class="role">${msg.role === 'user' ? '你' : 'AI小车'}</div>`;
+                const contentDiv = document.createElement('div');
+                contentDiv.className = 'message-content';
+
+                let innerContent = '';
+                if (msg.role === 'user') {
+                    msg.content.forEach(item => {
+                        if (item.type === 'text') innerContent += `<span>${item.text}</span>`;
+                    });
+                    if (msg.image_path) {
+                        innerContent += `<img src="/${msg.image_path}" alt="用户图片" onclick="window.open(this.src, '_blank');">`;
+                    }
+                } else if (msg.role === 'assistant') {
+                    if (msg.tool_calls) {
+                        // 如果是工具调用消息，显示一个占位符或提示
+                        innerContent = `<span style="color: #6c757d; font-style: italic;">[正在分析并执行指令...]</span>`;
+                    } else {
+                        innerContent = `<span>${msg.content}</span>`;
+                    }
+                } else if (msg.role === 'tool') {
+                    // 工具执行结果消息，暂时不在前端显示，因为它只是上下文
+                    return; // 直接跳过，不渲染到聊天记录里
+                }
+
+                contentDiv.innerHTML = innerContent;
+                msgWrapper.innerHTML = contentHTML;
+                msgWrapper.appendChild(contentDiv);
+                chatLog.appendChild(msgWrapper);
+            });
+            currentHistoryLength = data.history.length;
+        }
+        chatLog.scrollTop = chatLog.scrollHeight;
+    }
+    async function pollForHistory() {
+        // 如果当前有弹窗或正在加载，则暂时不轮询，避免冲突
+        if (loadingIndicator.style.display !== 'none') {
+            return;
+        }
+        try {
+            const response = await fetch('/get_history');
+            const data = await response.json();
+            const serverHistoryLength = data.history ? data.history.length : 0;
+            // 如果服务器上的记录数量和当前页面的不一致，就更新界面
+            if (serverHistoryLength !== currentHistoryLength) {
+                console.log('检测到聊天记录更新，正在同步...');
+                updateChat(data);
+            }
+        } catch (error) {
+            // 获取失败时静默处理，避免打扰用户
+            // console.error('轮询历史记录失败:', error);
+        }
+    }
+    function setLoading(isLoading) {
+        loadingIndicator.style.display = isLoading ? 'block' : 'none';
+        formFieldset.disabled = isLoading;
+    }
+
+    async function submitForm(url, formData) {
+        setLoading(true);
+        try {
+            const response = await fetch(url, { method: 'POST', body: formData });
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            const data = await response.json();
+            if (data.error) {
+                alert(`错误: ${data.error}`);
+            } else {
+                updateChat(data);
+            }
+        } catch (error) {
+            console.error('请求失败:', error);
+            alert('与服务器通信失败！');
+        } finally {
+            setLoading(false);
+            // 只在非自主模式下清空输入框，方便自主模式下微调指令
+            if (!isAutonomousMode) {
+                 promptInput.value = '';
+            }
+            // 重置文件输入
+            document.getElementById('image-input').value = '';
+        }
+    }
+
+    async function checkTtsStatus() {
+        try {
+            const response = await fetch('/tts_status');
+            const data = await response.json();
+            formFieldset.disabled = data.is_playing;
+            stopTtsBtn.style.display = data.is_playing ? 'block' : 'none';
+        } catch (error) {
+            formFieldset.disabled = false;
+            stopTtsBtn.style.display = 'none';
+        }
+    }
+
+    chatForm.addEventListener('submit', e => {
+        e.preventDefault();
+        const formData = new FormData(chatForm);
+        formData.append('autonomous_mode', isAutonomousMode);
+        submitForm('/send_message', formData);
+    });
+
+    captureBtn.addEventListener('click', () => {
+        const formData = new FormData();
+        formData.append('prompt', promptInput.value);
+        formData.append('autonomous_mode', isAutonomousMode);
+        submitForm('/capture_and_send', formData);
+    });
+
+    toggleAutonomyBtn.addEventListener('click', () => {
+        isAutonomousMode = !isAutonomousMode;
+        toggleAutonomyBtn.textContent = isAutonomousMode ? '关闭自主移动' : '开启自主移动';
+        if (isAutonomousMode) {
+            toggleAutonomyBtn.classList.remove('btn-secondary');
+            toggleAutonomyBtn.classList.add('btn-success');
+        } else {
+            toggleAutonomyBtn.classList.remove('btn-success');
+            toggleAutonomyBtn.classList.add('btn-secondary');
+        }
+        fetch('/toggle_autonomy_backend', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({is_autonomous: isAutonomousMode}) });
+
+    });
+
+    toggleMuteBtn.addEventListener('click', async () => {
+        const response = await fetch('/toggle_mute', { method: 'POST' });
+        const data = await response.json();
+        toggleMuteBtn.textContent = data.is_muted ? '取消静音' : '开启静音';
+    });
+
+    clearHistoryBtn.addEventListener('click', async () => {
+        if (confirm('确定要清空所有对话记忆吗？这将开启一个全新的会话。')) {
+            await fetch('/clear_history', { method: 'POST' });
+            chatLog.innerHTML = '';
+        }
+    });
+
+    toggleCameraBtn.addEventListener('click', () => {
+        const isHidden = videoContainer.style.display === 'none';
+        videoContainer.style.display = isHidden ? 'block' : 'none';
+        toggleCameraBtn.textContent = isHidden ? '隐藏摄像头' : '显示摄像头';
+        videoFeed.src = isHidden ? '/video_feed' : '';
+    });
+    
+    stopTtsBtn.addEventListener('click', async () => {
+        await fetch('/stop_tts', { method: 'POST' });
+        formFieldset.disabled = false;
+        stopTtsBtn.style.display = 'none';
+    });
+
+    chatLog.scrollTop = chatLog.scrollHeight;
+    ttsStatusInterval = setInterval(checkTtsStatus, 1000);
+    currentHistoryLength = document.querySelectorAll('#chat-log .message').length;
+    // 每隔3秒钟调用一次pollForHistory函数
+    setInterval(pollForHistory, 1500);
+</script>
+
+</body>
+</html>
