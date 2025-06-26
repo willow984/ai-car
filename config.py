@@ -19,6 +19,7 @@ MAX_MOVE_DISTANCE = 0.4   # 单次指令最大移动距离(米)
 MAX_TURN_ANGLE = 30.0     # 单次指令最大转向角度(度)
 
 
+
 # --- ROS 手柄按钮ID定义 ---
 L1_BUTTON_ID = 4
 R1_BUTTON_ID = 5
